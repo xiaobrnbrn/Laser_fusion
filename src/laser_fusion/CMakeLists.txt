@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(laser_fusion)
 
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
 
@@ -11,8 +14,15 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
+  tf
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
 )
 
+find_package(Eigen3 REQUIRED)
+find_package(PCL REQUIRED)
+find_package(OpenCV REQUIRED) 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
@@ -103,10 +113,10 @@ find_package(catkin REQUIRED COMPONENTS
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-#  INCLUDE_DIRS include
+  INCLUDE_DIRS include
 #  LIBRARIES laser_fusion
-#  CATKIN_DEPENDS roscpp rospy std_msgs
-#  DEPENDS system_lib
+  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs nav_msgs
+  DEPENDS  EIGEN3  OpenCV  PCL
 )
 
 ###########
@@ -116,9 +126,14 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+ #include
   ${catkin_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIR}
+	${PCL_INCLUDE_DIRS}
 )
+
+# link_directories(${PCL_LIBRARY_DIRS})
+# add_definitions(${PCL_DEFINITIONS})
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
@@ -134,6 +149,8 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 # add_executable(${PROJECT_NAME}_node src/laser_fusion_node.cpp)
+add_executable(scan_process  src/scan_process.cpp)
+target_link_libraries(scan_process  ${catkin_LIBRARIES}  ${PCL_LIBRARIES})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -146,7 +163,8 @@ include_directories(
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-# target_link_libraries(${PROJECT_NAME}_node
+# target_link_libraries(
+#   ${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
 # )
 
