@@ -6,6 +6,12 @@
 
 #IncludeRegexTransform: 
 
+/home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h
+cmath
+-
+pcl/point_types.h
+-
+
 /home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/src/scan_process.cpp
 cmath
 -
@@ -28,6 +34,8 @@ pcl/point_types.h
 pcl/filters/voxel_grid.h
 -
 pcl/kdtree/kdtree_flann.h
+-
+/home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h
 -
 
 /opt/ros/melodic/include/geometry_msgs/Point.h

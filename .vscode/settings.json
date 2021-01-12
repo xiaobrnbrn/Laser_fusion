@@ -1,13 +1,19 @@
 {
     "python.autoComplete.extraPaths": [
+        "${workspaceFolder}/src",
         "/opt/ros/melodic/lib/python2.7/dist-packages",
         "/opt/ros/melodic/include",
         "/home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include",
         "/usr/include",
-        "/usr/include/pcl-1.8/pcl",
-        "${workspaceFolder}/src"
+        "/usr/include/pcl-1.8/pcl"
+        
     ],
     "files.associations": {
-        "cmath": "cpp"
+        "cmath": "cpp",
+        "hash_map": "cpp",
+        "hash_set": "cpp",
+        "bitset": "cpp",
+        "chrono": "cpp",
+        "algorithm": "cpp"
     }
 }
