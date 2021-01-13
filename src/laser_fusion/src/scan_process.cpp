@@ -39,6 +39,52 @@ const int systemDelay = 20;//弃用前20帧初始数据
 int systemInitCount = 0;
 bool systemInited = false;
 
+/*****IMU参数设置*****/
+//imu时间戳 大于 当前点云时间戳的位置
+int imuPointerFront = 0;
+//imu最新收到的点在数组中的位置
+int imuPointerLast = -1;
+//imu循环队列长度
+const int imuQueLength = 200;
+//点云起始点对应IMU和当前时刻点云对应IMU的姿态,速度和位置
+//姿态
+float imuRollStart = 0, imuPitchStart = 0, imuYawStart = 0;
+float imuRollCur = 0, imuPitchCur = 0, imuYawCur = 0;
+//速度
+float imuVeloXStart = 0, imuVeloYStart = 0, imuVeloZStart = 0;
+float imuVeloXCur = 0, imuVeloYCur = 0, imuVeloZCur = 0;
+//位置
+float imuShiftXStart = 0, imuShiftYStart = 0, imuShiftZStart = 0;
+float imuShiftXCur = 0, imuShiftYCur = 0, imuShiftZCur = 0;
+//点云数据中,当前点云相对于起始点云imu位置和速度变化
+float imuShiftFromStartXCur = 0, imuShiftFromStartYCur = 0, imuShiftFromStartZCur = 0;
+float imuVeloFromStartXCur = 0, imuVeloFromStartYCur = 0, imuVeloFromStartZCur = 0;
+//IMU信息存储
+//imu数据时间
+double imuTime[imuQueLength] = {0};
+//姿态角
+float imuRoll[imuQueLength] = {0};
+float imuPitch[imuQueLength] = {0};
+float imuYaw[imuQueLength] = {0};
+//加速度信息
+float imuAccX[imuQueLength] = {0};
+float imuAccY[imuQueLength] = {0};
+float imuAccZ[imuQueLength] = {0};
+//速度信息
+float imuVeloX[imuQueLength] = {0};
+float imuVeloY[imuQueLength] = {0};
+float imuVeloZ[imuQueLength] = {0};
+//位置
+float imuShiftX[imuQueLength] = {0};
+float imuShiftY[imuQueLength] = {0};
+float imuShiftZ[imuQueLength] = {0};
+
+
+
+
+
+
+
 //接收到点云数据后调用的回调函数
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
 {
@@ -153,6 +199,112 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
                 ori -= 2 * M_PI;
             }
         }
+        //计算点云中点的相对扫描时间
+        float relTime = (ori - startOri)/(endOri - startOri);
+        //点强度=线号+点相对时间（即一个整数+一个小数，整数部分是线号，小数部分是该点的相对时间）,匀速扫描：根据当前扫描的角度和扫描周期计算相对扫描起始位置的时间
+        point_.intensity = scanID + scanPeriod*relTime;
+        if(imuPointerLast > 0)
+        {
+            //如果收到IMU数据,使用IMU矫正点云畸变
+            //计算点在当前周期内的时间
+            float pointTime = relTime * scanPeriod;
+            //寻找是否有点云的时间戳 小于 IMU的时间戳
+            while (imuPointerFront != imuPointerLast)
+            {
+                //点时间=点云时间+周期时间
+                if(timeScanCur + pointTime < imuTime[imuPointerFront])
+                {
+                    //当有点云数据的时间 小于 imu的时间戳时,break(因为imu的时间戳范围要包含点云时间戳范围)
+                    break;
+                }
+                //找到 小于 当前点时间的最大时间imu数据位置
+                imuPointerFront = (imuPointerFront + 1) % imuQueLength;
+            }
+
+            if(timeScanCur + pointTime > imuTime[imuPointerFront])
+            {
+                //imuPointerFront是小于且最接近当前点时间的imu位置索引
+                //把imuPointerFront位置的imu数据当做当前点的imu状态
+                imuRollCur = imuRoll[imuPointerFront];
+                imuPitchCur = imuPitch[imuPointerFront];
+                imuYawCur = imuYaw[imuPointerFront];
+
+                imuVeloXCur = imuVeloX[imuPointerFront];
+                imuVeloYCur = imuVeloY[imuPointerFront];
+                imuVeloZCur = imuVeloZ[imuPointerFront];
+
+                imuShiftXCur = imuShiftX[imuPointerFront];
+                imuShiftYCur = imuShiftY[imuPointerFront];
+                imuShiftZCur = imuShiftZ[imuPointerFront];
+            }
+            else//当前点的时间 小于 imu时间,即当前点之前没有imu数据,imu数据在当前点之后出现
+            {
+                int imuPointerBack = (imuPointerFront + imuQueLength - 1) % imuQueLength;
+                //通过线性插值的方式计算出当前点对应的imu状态,假设imu状态在这段时间内是均匀变化的
+                /*     线性插值的结论:直线上有两点a和b,对应的值分别是f(a)和f(b),函数值随自变量均匀变化,
+                则直线上任意一点x对应的函数值为: f(x) =  f(a) * (b-x) / (b-a) + f(b) * (x-a) / (b-a)    */
+                float ratioFront = (timeScanCur + pointTime - imuTime[imuPointerBack]) 
+                         / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
+                float ratioBack = (imuTime[imuPointerFront] - timeScanCur - pointTime) 
+                        / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
+                //插值计算得到的当前点对应的imu状态
+                //姿态角
+                imuRollCur = imuRoll[imuPointerFront]*ratioFront + imuRoll[imuPointerBack]*ratioBack;
+                imuPitchCur = imuPitch[imuPointerFront]*ratioFront + imuPitch[imuPointerBack]*ratioBack;
+                //航向角由于存在奇异性,因此需要进一步判断处理
+                //?????为什么要求 | imuYaw[imuPointerFront] - imuYaw[imuPointerBack] |  <= pi
+                if (imuYaw[imuPointerFront] - imuYaw[imuPointerBack] > M_PI) 
+                {
+                    imuYawCur = imuYaw[imuPointerFront] * ratioFront + (imuYaw[imuPointerBack] + 2 * M_PI) * ratioBack;
+                } 
+                else if (imuYaw[imuPointerFront] - imuYaw[imuPointerBack] < -M_PI)
+                {
+                    imuYawCur = imuYaw[imuPointerFront] * ratioFront + (imuYaw[imuPointerBack] - 2 * M_PI) * ratioBack;
+                } 
+                else
+                {
+                    imuYawCur = imuYaw[imuPointerFront] * ratioFront + imuYaw[imuPointerBack] * ratioBack;
+                }
+                //速度
+                imuVeloXCur = imuVeloX[imuPointerFront] * ratioFront + imuVeloX[imuPointerBack] * ratioBack;
+                imuVeloYCur = imuVeloY[imuPointerFront] * ratioFront + imuVeloY[imuPointerBack] * ratioBack;
+                imuVeloZCur = imuVeloZ[imuPointerFront] * ratioFront + imuVeloZ[imuPointerBack] * ratioBack;
+                //位置
+                imuShiftXCur = imuShiftX[imuPointerFront] * ratioFront + imuShiftX[imuPointerBack] * ratioBack;
+                imuShiftYCur = imuShiftY[imuPointerFront] * ratioFront + imuShiftY[imuPointerBack] * ratioBack;
+                imuShiftZCur = imuShiftZ[imuPointerFront] * ratioFront + imuShiftZ[imuPointerBack] * ratioBack;
+
+            }
+
+            //如果是第一个点,记录这个点对应的imu状态为imu初始状态
+            if(i == 0)
+            {
+                imuRollStart = imuRollCur;
+                imuPitchStart = imuPitchCur;
+                imuYawStart = imuYawCur;
+
+                imuVeloXStart = imuVeloXCur;
+                imuVeloYStart = imuVeloYCur;
+                imuVeloZStart = imuVeloZCur;
+
+                imuShiftXStart = imuShiftXCur;
+                imuShiftYStart = imuShiftYCur;
+                imuShiftZStart = imuShiftZCur;
+            }
+            else//不是第一个点,计算当前点对应的imu相对第一个点对应imu的运动,对当前点进行运动补偿,消除运动畸变
+            {
+                ShiftToStartIMU(pointTime);//TODO1:将当前点坐标变换到第一个点对应的imu坐标系下
+                VeloToStartIMU();//TODO2:速度变换
+                TransformToStartIMU(&point);//TODO3:姿态变换
+            }
+            
+
+            
+
+            
+
+        }
+
         
 
         
@@ -177,6 +329,12 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     
 
 
+ return ;
+ }
+
+//TODO1:计算当前点在当前帧中第一个点对应imu系下的位置
+ void ShiftToStartIMU(float pointTime)
+ {
 
  }
 
@@ -191,6 +349,7 @@ int main(int argc, char** argv)
     ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/rslidar_points",2,laserCloudHandler);
 
     
+    ros::spin();
     return 0;
 }
 
