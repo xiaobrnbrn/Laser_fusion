@@ -14,6 +14,7 @@
         "hash_set": "cpp",
         "bitset": "cpp",
         "chrono": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "complex": "cpp"
     }
 }

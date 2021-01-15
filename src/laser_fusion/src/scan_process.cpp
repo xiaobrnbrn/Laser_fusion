@@ -85,6 +85,129 @@ float imuShiftZ[imuQueLength] = {0};
 
 
 
+//TODO1
+void ShiftToStartIMU(float pointTime)
+{
+    //计算相对于imuStart,由于加减速产生的畸变位移(计算结果表示在全局坐标系下)
+    //x2 = x1 + v*t + 0.5*a*t^2, 这里计算的就是0.5*a*t^2
+    imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart - imuVeloXStart * pointTime;
+    imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart - imuVeloYStart * pointTime;
+    imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart - imuVeloZStart * pointTime;
+    /********************************************************************************
+    Rz(pitch).inverse * Rx(pitch).inverse * Ry(yaw).inverse * delta_Tg
+    transfrom from the global frame to the local frame
+    *********************************************************************************/
+    //将上面的计算结果从全局坐标系转换到imuStart局部坐标系
+    //绕y轴旋转(-imuYawStart)，即Ry(yaw).inverse
+    //????????旋转角为啥是负的
+    //原代码:
+    float x1 = cos(imuYawStart) * imuShiftFromStartXCur - sin(imuYawStart) * imuShiftFromStartZCur;
+    float y1 = imuShiftFromStartYCur;
+    float z1 = sin(imuYawStart) * imuShiftFromStartXCur + cos(imuYawStart) * imuShiftFromStartZCur;
+    //Debug
+    // float x1 = cos(imuYawStart) * imuShiftFromStartXCur + sin(imuYawStart) * imuShiftFromStartZCur;
+    // float y1 = imuShiftFromStartYCur;
+    // float z1 = -sin(imuYawStart) * imuShiftFromStartXCur + cos(imuYawStart) * imuShiftFromStartZCur;
+
+    //绕x轴旋转(-imuPitchStart)，即Rx(pitch).inverse
+    float x2 = x1;
+    float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
+    float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
+
+    //绕z轴旋转(-imuRollStart)，即Rz(pitch).inverse
+    //计算结果转换到局部坐标系下
+    imuShiftFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
+    imuShiftFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
+    imuShiftFromStartZCur = z2;
+
+}
+
+//TODO2
+void VeloToStartIMU()
+{
+    //计算相对于imuStart,由于加减速产生的速度畸变(计算结果表示在全局坐标系下)
+    imuVeloFromStartXCur = imuVeloXCur - imuVeloXStart;
+    imuVeloFromStartYCur = imuVeloYCur - imuVeloYStart;
+    imuVeloFromStartZCur = imuVeloZCur - imuVeloZStart;
+    /********************************************************************************
+    Rz(pitch).inverse * Rx(pitch).inverse * Ry(yaw).inverse * delta_Vg
+    transfrom from the global frame to the local frame
+    *********************************************************************************/
+    //绕y轴旋转(-imuYawStart)，即Ry(yaw).inverse
+    //原代码
+    float x1 = cos(imuYawStart) * imuVeloFromStartXCur - sin(imuYawStart) * imuVeloFromStartZCur;
+    float y1 = imuVeloFromStartYCur;
+    float z1 = sin(imuYawStart) * imuVeloFromStartXCur + cos(imuYawStart) * imuVeloFromStartZCur;
+    //Debug
+    // float x1 = cos(imuYawStart) * imuVeloFromStartXCur - sin(imuYawStart) * imuVeloFromStartZCur;
+    // float y1 = imuVeloFromStartYCur;
+    // float z1 = sin(imuYawStart) * imuVeloFromStartXCur + cos(imuYawStart) * imuVeloFromStartZCur;
+
+    //绕x轴旋转(-imuPitchStart)，即Rx(pitch).inverse
+    float x2 = x1;
+    float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
+    float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
+
+    //绕z轴旋转(-imuRollStart)，即Rz(pitch).inverse
+    imuVeloFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
+    imuVeloFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
+    imuVeloFromStartZCur = z2;
+
+}
+
+//传入的点是在imuShiftCur/当前lidar系下的
+void TransformToStartIMU(PointType *p)
+{
+    /*** 将点从当前坐标系->全局坐标系 ***/
+    //绕z轴旋转(imuRollCur)
+    float x1 = cos(imuRollCur) * p->x - sin(imuRollCur) * p->y;
+    float y1 = sin(imuRollCur) * p->x + cos(imuRollCur) * p->y;
+    float z1 = p->z;
+    //Debug
+    // float x1 = cos(imuRollCur) * p->x + sin(imuRollCur) * p->y;
+    // float y1 = -sin(imuRollCur) * p->x + cos(imuRollCur) * p->y;
+    // float z1 = p->z;
+
+    //绕x轴旋转(imuPitchCur)
+    float x2 = x1;
+    float y2 = cos(imuPitchCur) * y1 - sin(imuPitchCur) * z1;
+    float z2 = sin(imuPitchCur) * y1 + cos(imuPitchCur) * z1;
+    //Debug
+    // float x2 = x1;
+    // float y2 = cos(imuPitchCur) * y1 + sin(imuPitchCur) * z1;
+    // float z2 = -sin(imuPitchCur) * y1 + cos(imuPitchCur) * z1;
+
+    //绕y轴旋转(imuYawCur)
+    float x3 = cos(imuYawCur) * x2 + sin(imuYawCur) * z2;
+    float y3 = y2;
+    float z3 = -sin(imuYawCur) * x2 + cos(imuYawCur) * z2;
+
+    /*** 再将点从全局坐标系->初始坐标系(即完成了畸变矫正) ***/
+    //绕y轴旋转(-imuYawStart)
+    float x4 = cos(imuYawStart) * x3 - sin(imuYawStart) * z3;
+    float y4 = y3;
+    float z4 = sin(imuYawStart) * x3 + cos(imuYawStart) * z3;
+    //Debug
+    // float x4 = cos(imuYawStart) * x3 + sin(imuYawStart) * z3;
+    // float y4 = y3;
+    // float z4 = -sin(imuYawStart) * x3 + cos(imuYawStart) * z3;
+
+    //绕x轴旋转(-imuPitchStart)
+    float x5 = x4;
+    float y5 = cos(imuPitchStart) * y4 + sin(imuPitchStart) * z4;
+    float z5 = -sin(imuPitchStart) * y4 + cos(imuPitchStart) * z4;
+
+    //绕z轴旋转(-imuRollStart)，然后叠加平移量
+    //当前帧点的坐标从当前imu系->初始imu系,完成畸变矫正
+    p->x = cos(imuRollStart) * x5 + sin(imuRollStart) * y5 + imuShiftFromStartXCur;
+    p->y = -sin(imuRollStart) * x5 + cos(imuRollStart) * y5 + imuShiftFromStartYCur;
+    p->z = z5 + imuShiftFromStartZCur;
+
+    return;
+}
+
+
+
 //接收到点云数据后调用的回调函数
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
 {
@@ -293,16 +416,14 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
             }
             else//不是第一个点,计算当前点对应的imu相对第一个点对应imu的运动,对当前点进行运动补偿,消除运动畸变
             {
-                ShiftToStartIMU(pointTime);//TODO1:将当前点坐标变换到第一个点对应的imu坐标系下
-                VeloToStartIMU();//TODO2:速度变换
-                TransformToStartIMU(&point);//TODO3:姿态变换
+                ShiftToStartIMU(pointTime);
+                VeloToStartIMU();
+                //这里的&表示取地址
+                TransformToStartIMU(&point_);
             }
-            
+         //收到imu消息时,利用imu信息矫正运动畸变
 
-            
-
-            
-
+         
         }
 
         
@@ -330,13 +451,13 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
 
 
  return ;
- }
+}
 
-//TODO1:计算当前点在当前帧中第一个点对应imu系下的位置
- void ShiftToStartIMU(float pointTime)
- {
 
- }
+
+ 
+
+ 
 
 
 
