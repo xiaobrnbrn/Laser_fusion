@@ -88,10 +88,12 @@ float imuShiftX[imuQueLength] = {0};
 float imuShiftY[imuQueLength] = {0};
 float imuShiftZ[imuQueLength] = {0};
 
-
-
-
-
+ros::Publisher pubLaserCloud;
+ros::Publisher pubCornerPointsSharp;
+ros::Publisher pubCornerPointsLessSharp;
+ros::Publisher pubSurfPointsFlat;
+ros::Publisher pubSurfPointsLessFlat;
+ros::Publisher pubImuTrans;
 
 
 void ShiftToStartIMU(float pointTime)
@@ -738,27 +740,66 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     }//遍历所有scan
 
     //publich消除非匀速运动畸变后的所有的点
-    
+    sensor_msgs::PointCloud2 laserCloudOutMsg;
+    pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
+    laserCloudOutMsg.header.stamp = laserCloudmsg->header.stamp;
+    laserCloudOutMsg.header.frame_id = "/camera";
+    pubLaserCloud.publish(laserCloudOutMsg);
 
-    
+    //publich消除非匀速运动畸变后的平面点和边沿点
+    sensor_msgs::PointCloud2 cornerPointsSharpMsg;
+    pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
+    cornerPointsSharpMsg.header.stamp = laserCloudmsg->header.stamp;
+    cornerPointsSharpMsg.header.frame_id = "/camera";
+    pubCornerPointsSharp.publish(cornerPointsSharpMsg);
 
-    
+    sensor_msgs::PointCloud2 cornerPointsLessSharpMsg;
+    pcl::toROSMsg(cornerPointsLessSharp, cornerPointsLessSharpMsg);
+    cornerPointsLessSharpMsg.header.stamp = laserCloudmsg->header.stamp;
+    cornerPointsLessSharpMsg.header.frame_id = "/camera";
+    pubCornerPointsLessSharp.publish(cornerPointsLessSharpMsg);
 
+    sensor_msgs::PointCloud2 surfPointsFlat2;
+    pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
+    surfPointsFlat2.header.stamp = laserCloudmsg->header.stamp;
+    surfPointsFlat2.header.frame_id = "/camera";
+    pubSurfPointsFlat.publish(surfPointsFlat2);
 
+    sensor_msgs::PointCloud2 surfPointsLessFlat2;
+    pcl::toROSMsg(surfPointsLessFlat, surfPointsLessFlat2);
+    surfPointsLessFlat2.header.stamp = laserCloudmsg->header.stamp;
+    surfPointsLessFlat2.header.frame_id = "/camera";
+    pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
 
+    //publich IMU消息,由于循环到了最后，因此是Cur都是代表最后一个点，即最后一个点的欧拉角，畸变位移及一个点云周期增加的速度
+    pcl::PointCloud<pcl::PointXYZ> imuTrans(4, 1);
+    //??????这里都是点对应imu的状态吧
+    //起始点欧拉角
+    imuTrans.points[0].x = imuPitchStart;
+    imuTrans.points[0].y = imuYawStart;
+    imuTrans.points[0].z = imuRollStart;
 
+    //最后一个点的欧拉角
+    imuTrans.points[1].x = imuPitchCur;
+    imuTrans.points[1].y = imuYawCur;
+    imuTrans.points[1].z = imuRollCur;
 
+    //最后一个点相对于第一个点的畸变位移和速度
+    imuTrans.points[2].x = imuShiftFromStartXCur;
+    imuTrans.points[2].y = imuShiftFromStartYCur;
+    imuTrans.points[2].z = imuShiftFromStartZCur;
 
-    
+    imuTrans.points[3].x = imuVeloFromStartXCur;
+    imuTrans.points[3].y = imuVeloFromStartYCur;
+    imuTrans.points[3].z = imuVeloFromStartZCur;
 
+    sensor_msgs::PointCloud2 imuTransMsgs;
+    pcl::toROSMsg(imuTrans,imuTransMsgs);
+    imuTransMsgs.header.stamp = laserCloudmsg->header.stamp;
+    imuTransMsgs.header.frame_id = "/camera";
+    pubImuTrans.publish(imuTransMsgs);
 
-
-    
-    
-    
-
-
- return ;
+    return ;
 }
 
 
