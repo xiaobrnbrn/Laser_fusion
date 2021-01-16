@@ -325,7 +325,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
                 ori += 2 * M_PI;
             } 
             else if (ori > endOri + M_PI / 2)
-             {
+            {
                 ori -= 2 * M_PI;
             }
         }
@@ -333,7 +333,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
         float relTime = (ori - startOri)/(endOri - startOri);
         //点强度=线号+点相对时间（即一个整数+一个小数，整数部分是线号，小数部分是该点的相对时间）,匀速扫描：根据当前扫描的角度和扫描周期计算相对扫描起始位置的时间
         point_.intensity = scanID + scanPeriod*relTime;
-        if(imuPointerLast > 0)
+        if(imuPointerLast >= 0)
         {
             //如果收到IMU数据,使用IMU矫正点云畸变
             //计算点在当前周期内的时间
@@ -428,141 +428,319 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
                 //这里的&表示取地址
                 TransformToStartIMU(&point_);
             }
-         //收到imu消息时,利用imu信息矫正运动畸变
-
+        }//收到imu消息时,利用imu信息矫正运动畸变
+            
         laserCloudScans[scanID].push_back(point_);
+    }//遍历所有点
+
+    //获得有效范围内的点的数量
+    cloudSize = count;
+    pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
+    //将所有的点按照线号从小到大放入一个容器
+    for (int i = 0; i < N_SCANS; i++)
+    {
+        *laserCloud += laserCloudScans[i];
+    }
+    int scanCount = -1;
+    //使用每个点的前后五个点计算曲率，因此前五个与最后五个点跳过
+    for (int i = 5; i < cloudSize - 5; i++) 
+    {
+        float diffX = laserCloud->points[i - 5].x + laserCloud->points[i - 4].x 
+                    + laserCloud->points[i - 3].x + laserCloud->points[i - 2].x 
+                    + laserCloud->points[i - 1].x - 10 * laserCloud->points[i].x 
+                    + laserCloud->points[i + 1].x + laserCloud->points[i + 2].x
+                    + laserCloud->points[i + 3].x + laserCloud->points[i + 4].x
+                    + laserCloud->points[i + 5].x;
+        float diffY = laserCloud->points[i - 5].y + laserCloud->points[i - 4].y 
+                    + laserCloud->points[i - 3].y + laserCloud->points[i - 2].y 
+                    + laserCloud->points[i - 1].y - 10 * laserCloud->points[i].y 
+                    + laserCloud->points[i + 1].y + laserCloud->points[i + 2].y
+                    + laserCloud->points[i + 3].y + laserCloud->points[i + 4].y
+                    + laserCloud->points[i + 5].y;
+        float diffZ = laserCloud->points[i - 5].z + laserCloud->points[i - 4].z 
+                    + laserCloud->points[i - 3].z + laserCloud->points[i - 2].z 
+                    + laserCloud->points[i - 1].z - 10 * laserCloud->points[i].z 
+                    + laserCloud->points[i + 1].z + laserCloud->points[i + 2].z
+                    + laserCloud->points[i + 3].z + laserCloud->points[i + 4].z
+                    + laserCloud->points[i + 5].z;
+        //曲率计算
+        cloudCurvature[i] = diffX * diffX + diffY * diffY + diffZ * diffZ;
+        //记录曲率点的索引
+        cloudSortInd[i] = i;
+        //初始时，点全未筛选过(0-未筛选过，1-筛选过)
+        cloudNeighborPicked[i] = 0;
+        //初始化为less flat点(曲率比较小的点)
+        cloudLabel[i] = 0;
+        //每个scan，只有第一个符合的点会进来，因为每个scan的点都在一起存放
+        if (int(laserCloud->points[i].intensity) != scanCount) 
+        {
+            //控制每个scan只进入第一个点
+            scanCount = int(laserCloud->points[i].intensity);
+            //曲率只取同一个scan计算出来的，跨scan计算的曲率非法，排除，也即排除每个scan的前后五个点
+            if (scanCount > 0 && scanCount < N_SCANS)
+            {
+                scanStartInd[scanCount] = i + 5;
+                scanEndInd[scanCount - 1] = i - 5;
+            }
+        }
+    }//使用每个点的前后五个点计算曲率
+
+    //第一个scan曲率点有效点序从第5个开始，最后一个激光线结束点序size-5
+    scanStartInd[0] = 5;
+    scanEndInd.back() = cloudSize - 5;
+
+    //挑选点，排除容易被斜面挡住的点以及离群点，有些点容易被斜面挡住，而离群点可能出现带有偶然性，这些情况都可能导致前后两次扫描不能被同时看到
+    for(int i = 5; i < cloudSize - 6; i++)
+    {
+        //相邻点的三维坐标差值
+        float diffX = laserCloud->points[i + 1].x - laserCloud->points[i].x;
+        float diffY = laserCloud->points[i + 1].y - laserCloud->points[i].y;
+        float diffZ = laserCloud->points[i + 1].z - laserCloud->points[i].z;
+        //相邻点空间距离的平方
+        float diff = diffX * diffX + diffY * diffY + diffZ * diffZ;
+
+        //如果两个点之间的距离的平方大于0.1
+        if(diff > 0.1)
+        {
+            //分别计算这两点的深度
+            float depth1 = sqrt(laserCloud->points[i].x * laserCloud->points[i].x + 
+                                    laserCloud->points[i].y * laserCloud->points[i].y +
+                                    laserCloud->points[i].z * laserCloud->points[i].z);
+            float depth2 = sqrt(laserCloud->points[i+1].x * laserCloud->points[i+1].x + 
+                                    laserCloud->points[i+1].y * laserCloud->points[i+1].y +
+                                    laserCloud->points[i+1].z * laserCloud->points[i+1].z);
+            if(depth1 > depth2)
+            {
+                //按照两点的深度的比例，将深度较大的点拉回后计算距离
+                diffX = laserCloud->points[i+1].x - laserCloud->points[i].x * depth2 / depth1;
+                diffY = laserCloud->points[i+1].y - laserCloud->points[i].y * depth2 / depth1;
+                diffZ = laserCloud->points[i+1].z - laserCloud->points[i].z * depth2 / depth1;
+                //计算两点之间形成的弧度值,如果弧度值比较小,说明斜面比较陡,深度变化剧烈,点处在近似与激光束平行的斜面上
+                if(sqrt(diffX * diffX + diffY * diffY + diffZ *diffZ) / depth2 < 0.1)
+                {
+                    //该点及前面五个点（大致都在斜面上）全部置为筛选过
+                    //筛选"过"意味着什么,意味着"弃用"
+                    cloudNeighborPicked[i - 5] = 1;
+                    cloudNeighborPicked[i - 4] = 1;
+                    cloudNeighborPicked[i - 3] = 1;
+                    cloudNeighborPicked[i - 2] = 1;
+                    cloudNeighborPicked[i - 1] = 1;
+                    cloudNeighborPicked[i] = 1;
+                }
+            }
+            else//depth1 < depth2, 与上面操作类似
+            {
+                diffX = laserCloud->points[i + 1].x * depth1 / depth2 - laserCloud->points[i].x;
+                diffY = laserCloud->points[i + 1].y * depth1 / depth2 - laserCloud->points[i].y;
+                diffZ = laserCloud->points[i + 1].z * depth1 / depth2 - laserCloud->points[i].z;
+                if (sqrt(diffX * diffX + diffY * diffY + diffZ * diffZ) / depth1 < 0.1)
+                {
+                    cloudNeighborPicked[i + 1] = 1;
+                    cloudNeighborPicked[i + 2] = 1;
+                    cloudNeighborPicked[i + 3] = 1;
+                    cloudNeighborPicked[i + 4] = 1;
+                    cloudNeighborPicked[i + 5] = 1;
+                    cloudNeighborPicked[i + 6] = 1;
+                }
+            }
+        }
+        //与前一个点的距离
+        float diffX2 = laserCloud->points[i].x - laserCloud->points[i - 1].x;
+        float diffY2 = laserCloud->points[i].y - laserCloud->points[i - 1].y;
+        float diffZ2 = laserCloud->points[i].z - laserCloud->points[i - 1].z;
+        //与前一个点的距离平方和
+        float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
+        //i点的深度平方和
+        float dis = laserCloud->points[i].x * laserCloud->points[i].x
+                            + laserCloud->points[i].y * laserCloud->points[i].y
+                            + laserCloud->points[i].z * laserCloud->points[i].z;
+        //与前后点的距离平方和都大于深度平方和的万分之二，这些点视为离群点，包括陡斜面上的点，强烈凸凹点和空旷区域中的某些点，置为筛选过，弃用
+        if (diff > 0.0002 * dis && diff2 > 0.0002 * dis)
+        {
+            cloudNeighborPicked[i] = 1;
         }
 
-        //获得有效范围内的点的数量
-        cloudSize = count;
-        pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
-        //将所有的点按照线号从小到大放入一个容器
-        for (int i = 0; i < N_SCANS; i++)
+    }//挑选点,筛掉野值点和斜面上的点
+
+    
+
+    //声明存放角点和面点的点云
+    pcl::PointCloud<PointType> cornerPointsSharp;
+    pcl::PointCloud<PointType> cornerPointsLessSharp;
+    pcl::PointCloud<PointType> surfPointsFlat;
+    pcl::PointCloud<PointType> surfPointsLessFlat;
+
+        for (int i = 0; i < N_SCANS; i++) 
+    {
+        //将每条线上的点分入相应的类别：角点和面点
+        pcl::PointCloud<PointType>::Ptr surfPointsLessFlatScan(new pcl::PointCloud<PointType>);
+        //将每个scan的曲率点分成6等份处理,确保周围都有点被选作特征点
+        for (int j = 0; j < 6; j++)
         {
-            *laserCloud += laserCloudScans[i];
-        }
-        int scanCount = -1;//???
-        //使用每个点的前后五个点计算曲率，因此前五个与最后五个点跳过
-        for (int i = 5; i < cloudSize - 5; i++) 
-        {
-            float diffX = laserCloud->points[i - 5].x + laserCloud->points[i - 4].x 
-                        + laserCloud->points[i - 3].x + laserCloud->points[i - 2].x 
-                        + laserCloud->points[i - 1].x - 10 * laserCloud->points[i].x 
-                        + laserCloud->points[i + 1].x + laserCloud->points[i + 2].x
-                        + laserCloud->points[i + 3].x + laserCloud->points[i + 4].x
-                        + laserCloud->points[i + 5].x;
-            float diffY = laserCloud->points[i - 5].y + laserCloud->points[i - 4].y 
-                        + laserCloud->points[i - 3].y + laserCloud->points[i - 2].y 
-                        + laserCloud->points[i - 1].y - 10 * laserCloud->points[i].y 
-                        + laserCloud->points[i + 1].y + laserCloud->points[i + 2].y
-                        + laserCloud->points[i + 3].y + laserCloud->points[i + 4].y
-                        + laserCloud->points[i + 5].y;
-            float diffZ = laserCloud->points[i - 5].z + laserCloud->points[i - 4].z 
-                        + laserCloud->points[i - 3].z + laserCloud->points[i - 2].z 
-                        + laserCloud->points[i - 1].z - 10 * laserCloud->points[i].z 
-                        + laserCloud->points[i + 1].z + laserCloud->points[i + 2].z
-                        + laserCloud->points[i + 3].z + laserCloud->points[i + 4].z
-                        + laserCloud->points[i + 5].z;
-            //曲率计算
-            cloudCurvature[i] = diffX * diffX + diffY * diffY + diffZ * diffZ;
-            //记录曲率点的索引
-            cloudSortInd[i] = i;
-            //初始时，点全未筛选过(0-未筛选过，1-筛选过)
-            cloudNeighborPicked[i] = 0;
-            //初始化为less flat点(曲率比较小的点)
-            cloudLabel[i] = 0;
-            //每个scan，只有第一个符合的点会进来，因为每个scan的点都在一起存放
-            if (int(laserCloud->points[i].intensity) != scanCount) 
+            //每等份的起点：sp = scanStartInd + (scanEndInd - scanStartInd)*j/6
+            int sp = (scanStartInd[i] * (6 - j)  + scanEndInd[i] * j) / 6;
+            //每等份的终点：ep = scanStartInd - 1 + (scanEndInd - scanStartInd)*(j+1)/6
+            int ep = (scanStartInd[i] * (5 - j)  + scanEndInd[i] * (j + 1)) / 6 - 1;
+            //将每等份中的点按照曲率从小到大排序(冒泡法)
+            for(int k = sp + 1; k <= ep; k++)
             {
-                //控制每个scan只进入第一个点
-                scanCount = int(laserCloud->points[i].intensity);
-                //曲率只取同一个scan计算出来的，跨scan计算的曲率非法，排除，也即排除每个scan的前后五个点
-                if (scanCount > 0 && scanCount < N_SCANS)
+                for(int l = k; l >= sp + 1; l--)
                 {
-                    scanStartInd[scanCount] = i + 5;
-                    scanEndInd[scanCount - 1] = i - 5;
-                }
-            }
-        }//计算每个scan中点的曲率
-
-        //第一个scan曲率点有效点序从第5个开始，最后一个激光线结束点序size-5
-        scanStartInd[0] = 5;
-        scanEndInd.back() = cloudSize - 5;
-
-        //挑选点，排除容易被斜面挡住的点以及离群点，有些点容易被斜面挡住，而离群点可能出现带有偶然性，这些情况都可能导致前后两次扫描不能被同时看到
-        for(int i = 5; i < cloudSize - 6; i++)
-        {
-            //相邻点的三维坐标差值
-            float diffX = laserCloud->points[i + 1].x - laserCloud->points[i].x;
-            float diffY = laserCloud->points[i + 1].y - laserCloud->points[i].y;
-            float diffZ = laserCloud->points[i + 1].z - laserCloud->points[i].z;
-            //相邻点空间距离的平方
-            float diff = diffX * diffX + diffY * diffY + diffZ * diffZ;
-
-            //如果两个点之间的距离的平方大于0.1
-            if(diff > 0.1)
-            {
-                //分别计算这两点的深度
-                float depth1 = sqrt(laserCloud->points[i].x * laserCloud->points[i].x + 
-                                        laserCloud->points[i].y * laserCloud->points[i].y +
-                                        laserCloud->points[i].z * laserCloud->points[i].z);
-                float depth2 = sqrt(laserCloud->points[i+1].x * laserCloud->points[i+1].x + 
-                                        laserCloud->points[i+1].y * laserCloud->points[i+1].y +
-                                        laserCloud->points[i+1].z * laserCloud->points[i+1].z);
-                if(depth1 > depth2)
-                {
-                    //按照两点的深度的比例，将深度较大的点拉回后计算距离
-                    diffX = laserCloud->points[i+1].x - laserCloud->points[i].x * depth2 / depth1;
-                    diffY = laserCloud->points[i+1].y - laserCloud->points[i].y * depth2 / depth1;
-                    diffZ = laserCloud->points[i+1].z - laserCloud->points[i].z * depth2 / depth1;
-                    //计算两点之间形成的弧度值,如果弧度值比较小,说明斜面比较陡,深度变化剧烈,点处在近似与激光束平行的斜面上
-                    if(sqrt(diffX * diffX + diffY * diffY + diffZ *diffZ) / depth2 < 0.1)
+                    if(cloudCurvature[cloudSortInd[l]] < cloudCurvature[cloudSortInd[l-1]])
                     {
-                        //该点及前面五个点（大致都在斜面上）全部置为筛选过
-                        //筛选"过"意味着什么,意味着"弃用"
-                        cloudNeighborPicked[i - 5] = 1;
-                        cloudNeighborPicked[i - 4] = 1;
-                        cloudNeighborPicked[i - 3] = 1;
-                        cloudNeighborPicked[i - 2] = 1;
-                        cloudNeighborPicked[i - 1] = 1;
-                        cloudNeighborPicked[i] = 1;
+                        //交换的是点的曲率编号,目的是让编号小的点曲率小,编号大的点曲率大
+                        int temp = cloudSortInd[l-1];
+                        cloudSortInd[l-1] = cloudSortInd[l];
+                        cloudSortInd[l] = temp;
                     }
                 }
-                else//depth1 < depth2, 与上面操作类似
+            }//完成每等份的点曲率排序
+
+            //挑选每个分段的曲率很大和比较大的点
+            int largestPickedNum = 0;
+            //从后往前筛选
+            for(int k = ep; k >= sp; k--)
+            {
+                //曲率最大点的点序
+                int ind = cloudSortInd[k];
+                //如果曲率大的点，曲率的确比较大，并且未被筛选过滤掉
+                if(cloudNeighborPicked[ind] == 0 && cloudCurvature[ind] > 0.1)
                 {
-                    diffX = laserCloud->points[i + 1].x * depth1 / depth2 - laserCloud->points[i].x;
-                    diffY = laserCloud->points[i + 1].y * depth1 / depth2 - laserCloud->points[i].y;
-                    diffZ = laserCloud->points[i + 1].z * depth1 / depth2 - laserCloud->points[i].z;
-                    if (sqrt(diffX * diffX + diffY * diffY + diffZ * diffZ) / depth1 < 0.1)
+                    largestPickedNum++;
+                    if(largestPickedNum <= 2)
                     {
-                        cloudNeighborPicked[i + 1] = 1;
-                        cloudNeighborPicked[i + 2] = 1;
-                        cloudNeighborPicked[i + 3] = 1;
-                        cloudNeighborPicked[i + 4] = 1;
-                        cloudNeighborPicked[i + 5] = 1;
-                        cloudNeighborPicked[i + 6] = 1;
+                        //挑选曲率最大的前2个点放入sharp点集合
+                        cloudLabel[ind] = 2;//2代表点曲率很大
+                        //曲率很大的点同时存在于曲率大和曲率较大的点云中
+                        cornerPointsSharp.push_back(laserCloud->points[ind]);
+                        cornerPointsLessSharp.push_back(laserCloud->points[ind]);
                     }
+                    else if (largestPickedNum <= 20)
+                    {
+                        //曲率较大但是不是最大的前两个点,只放入曲率较大的点云中
+                        cloudLabel[ind] = 1;//1代表曲率较大
+                        cornerPointsLessSharp.push_back(laserCloud->points[ind]);
+                    }
+                    else
+                    {
+                        //当前等份中提取的点已经够了,跳出循环
+                        break;
+                    }
+
+                    cloudNeighborPicked[ind] = 1;//筛选标志,设置该点已被筛选过
+                    
+                    //将曲率比较大的点的前后各5个连续距离比较近的点筛选出去，防止特征点聚集，使得特征点在每个方向上尽量分布均匀
+                    for (int l = 1; l <= 5; l++)
+                    {
+                        float diffX = laserCloud->points[ind + l].x 
+                                    - laserCloud->points[ind + l - 1].x;
+                        float diffY = laserCloud->points[ind + l].y 
+                                    - laserCloud->points[ind + l - 1].y;
+                        float diffZ = laserCloud->points[ind + l].z 
+                                    - laserCloud->points[ind + l - 1].z;
+                        if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.05)
+                        {
+                            break;
+                        }
+                        cloudNeighborPicked[ind + l] = 1;
+                    }
+                    for (int l = -1; l >= -5; l--)
+                    {
+                        float diffX = laserCloud->points[ind + l].x 
+                                    - laserCloud->points[ind + l + 1].x;
+                        float diffY = laserCloud->points[ind + l].y 
+                                    - laserCloud->points[ind + l + 1].y;
+                        float diffZ = laserCloud->points[ind + l].z 
+                                    - laserCloud->points[ind + l + 1].z;
+                        if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.05) 
+                        {
+                            break;
+                        }
+                        cloudNeighborPicked[ind + l] = 1;
+                    }
+                    
+                }//点的曲率较大，并且未被筛选过滤掉
+            }//挑选每个分段的曲率很大和比较大的点
+
+            //挑选每个分段的曲率很小比较小的点
+            int smallestPickedNum = 0;
+            //从前往后筛选
+            for (int k = sp; k <= ep; k++)
+            {
+                int ind = cloudSortInd[k];
+                //如果曲率的确比较小，并且未被筛选出
+                if (cloudNeighborPicked[ind] == 0 && cloudCurvature[ind] < 0.1)
+                {
+                    cloudLabel[ind] = -1;//-1代表曲率很小的点
+                    surfPointsFlat.push_back(laserCloud->points[ind]);
+                    smallestPickedNum++;
+                    if (smallestPickedNum >= 4)
+                    {
+                        //只选最小的四个，剩下的Label==0,就都是曲率比较小的
+                        break;
+                    }
+                    cloudNeighborPicked[ind] = 1;
+                    //同样防止特征点聚集
+                    for (int l = 1; l <= 5; l++)
+                    {
+                        float diffX = laserCloud->points[ind + l].x 
+                                    - laserCloud->points[ind + l - 1].x;
+                        float diffY = laserCloud->points[ind + l].y 
+                                    - laserCloud->points[ind + l - 1].y;
+                        float diffZ = laserCloud->points[ind + l].z 
+                                    - laserCloud->points[ind + l - 1].z;
+                        if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.05) {
+                        break;
+                        }
+
+                        cloudNeighborPicked[ind + l] = 1;
+                    }
+                    for (int l = -1; l >= -5; l--)
+                    {
+                        float diffX = laserCloud->points[ind + l].x 
+                                    - laserCloud->points[ind + l + 1].x;
+                        float diffY = laserCloud->points[ind + l].y 
+                                    - laserCloud->points[ind + l + 1].y;
+                        float diffZ = laserCloud->points[ind + l].z 
+                                    - laserCloud->points[ind + l + 1].z;
+                        if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.05) {
+                        break;
+                        }
+
+                        cloudNeighborPicked[ind + l] = 1;
+                    }
+
+                }//点的曲率较小，并且未被筛选出
+            }//挑选每个分段的曲率很小比较小的点
+
+            //将剩余的点（包括之前被排除的点）全部归入平面点中less flat类别中
+            for (int k = sp; k <= ep; k++) 
+            {
+                if (cloudLabel[k] <= 0)
+                {
+                    surfPointsLessFlatScan->push_back(laserCloud->points[k]);
                 }
             }
-            //与前一个点的距离
-            float diffX2 = laserCloud->points[i].x - laserCloud->points[i - 1].x;
-            float diffY2 = laserCloud->points[i].y - laserCloud->points[i - 1].y;
-            float diffZ2 = laserCloud->points[i].z - laserCloud->points[i - 1].z;
-            //与前一个点的距离平方和
-            float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
-            //i点的深度平方和
-            float dis = laserCloud->points[i].x * laserCloud->points[i].x
-                                + laserCloud->points[i].y * laserCloud->points[i].y
-                                + laserCloud->points[i].z * laserCloud->points[i].z;
-            //与前后点的距离平方和都大于深度平方和的万分之二，这些点视为离群点，包括陡斜面上的点，强烈凸凹点和空旷区域中的某些点，置为筛选过，弃用
-            if (diff > 0.0002 * dis && diff2 > 0.0002 * dis)
-            {
-                cloudNeighborPicked[i] = 1;
-            }
 
-        }//挑选点,筛掉野值点和斜面上的点
+        }//对每个scan六等份处理
 
-    }//循环遍历当前帧中的点
+        //由于less flat点最多，对每个分段less flat的点进行体素栅格滤波
+        //????体素栅格滤波是啥
+        pcl::PointCloud<PointType> surfPointsLessFlatScanDS;
+        pcl::VoxelGrid<PointType> downSizeFilter;
+        downSizeFilter.setInputCloud(surfPointsLessFlatScan);
+        downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
+        downSizeFilter.filter(surfPointsLessFlatScanDS);
+
+        //less flat点汇总
+        surfPointsLessFlat += surfPointsLessFlatScanDS;
+
+    }//遍历所有scan
+
+    //publich消除非匀速运动畸变后的所有的点
+    
+
+    
 
     
 
