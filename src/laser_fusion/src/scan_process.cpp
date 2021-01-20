@@ -21,6 +21,9 @@ designed by Shubin
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/kdtree/kdtree_flann.h>
+#include <sensor_msgs/Imu.h>
+#include <tf/transform_datatypes.h>
+#include <tf/transform_broadcaster.h>
 
 #include </home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
 
@@ -215,6 +218,56 @@ void TransformToStartIMU(PointType *p)
     return;
 }
 
+//积分得到imu的速度和位移
+void AccumulateIMUShift()
+{
+    //获得在 "左-上-前"坐标系下imu的真实运动信息
+    float roll = imuRoll[imuPointerLast];
+    float pitch = imuPitch[imuPointerLast];
+    float yaw = imuYaw[imuPointerLast];
+    float accX = imuAccX[imuPointerLast];
+    float accY = imuAccY[imuPointerLast];
+    float accZ = imuAccZ[imuPointerLast];
+
+    //将"左-上-前"坐标系下的imu信息转换到世界坐标系下
+    //将当前时刻的加速度值绕交换过的ZXY固定轴（原XYZ）分别旋转(roll, pitch, yaw)角
+    //绕固定轴旋转->外旋,注意这里是向量在旋转,不是参考坐标系在旋转
+    //Notes:欧拉角转换成旋转矩阵（相对于世界坐标系的旋转矩阵）通常是按外旋方式（绕固定轴）
+    //绕Z轴转roll
+    float x1 = cos(roll)*accX - sin(roll)*accY;
+    float y1 = sin(roll)*accX + cos(roll)*accY;
+    float z1 = accZ;
+    //绕X轴旋转pitch
+    float x2 = x1;
+    float y2 = cos(pitch)*y1 - sin(pitch)*z1;
+    float z2 = sin(pitch)*y1 + cos(pitch)*z1;
+    //绕Y轴转yaw,得到的accX,accY,accZ是世界坐标系下的真实加速度信息
+    accX = cos(yaw)*x2 + sin(yaw)*z2;
+    accY = y2;
+    accZ = -sin(yaw)*x2 + cos(yaw)*z2;
+
+    //找到上一个imu数据,没有直接用(imuPointerLast - 1)是因为0位置的上一个是199,而不是-1
+    int imuPointerBack = (imuPointerLast + imuQueLength - 1) % imuQueLength;
+    //相邻imu数据的时间间隔
+    double timeDiff = imuTime[imuPointerLast] - imuTime[imuPointerBack];
+    //要求imu的频率至少比lidar高，这样的imu信息才使用，后面校正也才有意义
+    if(timeDiff < scanPeriod)
+    {
+        //求当前imu在世界坐标系下的位置和速度,假设在timeDiff内imu是匀加速直线运动
+        imuShiftX[imuPointerLast] = imuShiftX[imuPointerBack] + imuVeloX[imuPointerBack] * timeDiff 
+                              + accX * timeDiff * timeDiff / 2;
+        imuShiftY[imuPointerLast] = imuShiftY[imuPointerBack] + imuVeloY[imuPointerBack] * timeDiff 
+                                + accY * timeDiff * timeDiff / 2;
+        imuShiftZ[imuPointerLast] = imuShiftZ[imuPointerBack] + imuVeloZ[imuPointerBack] * timeDiff 
+                                + accZ * timeDiff * timeDiff / 2;
+        imuVeloX[imuPointerLast] = imuVeloX[imuPointerBack] + accX * timeDiff;
+        imuVeloY[imuPointerLast] = imuVeloY[imuPointerBack] + accY * timeDiff;
+        imuVeloZ[imuPointerLast] = imuVeloZ[imuPointerBack] + accZ * timeDiff;
+
+    }
+
+}//积分得到imu的速度和位移
+
 
 
 //接收到点云数据后调用的回调函数
@@ -337,6 +390,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
         point_.intensity = scanID + scanPeriod*relTime;
         if(imuPointerLast >= 0)
         {
+            ROS_INFO("Accept the IMU data, process pointcloud with it!");
             //如果收到IMU数据,使用IMU矫正点云畸变
             //计算点在当前周期内的时间
             float pointTime = relTime * scanPeriod;
@@ -431,6 +485,11 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
                 TransformToStartIMU(&point_);
             }
         }//收到imu消息时,利用imu信息矫正运动畸变
+        else
+        {
+            ROS_INFO("No IMU data, only use the lidar data.");
+        }
+        
             
         laserCloudScans[scanID].push_back(point_);
     }//遍历所有点
@@ -740,6 +799,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     }//遍历所有scan
 
     //publich消除非匀速运动畸变后的所有的点
+    //所有点云
     sensor_msgs::PointCloud2 laserCloudOutMsg;
     pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
     laserCloudOutMsg.header.stamp = laserCloudmsg->header.stamp;
@@ -747,6 +807,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     pubLaserCloud.publish(laserCloudOutMsg);
 
     //publich消除非匀速运动畸变后的平面点和边沿点
+    //角点
     sensor_msgs::PointCloud2 cornerPointsSharpMsg;
     pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
     cornerPointsSharpMsg.header.stamp = laserCloudmsg->header.stamp;
@@ -759,6 +820,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     cornerPointsLessSharpMsg.header.frame_id = "/camera";
     pubCornerPointsLessSharp.publish(cornerPointsLessSharpMsg);
 
+    //面点
     sensor_msgs::PointCloud2 surfPointsFlat2;
     pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
     surfPointsFlat2.header.stamp = laserCloudmsg->header.stamp;
@@ -802,23 +864,71 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     return ;
 }
 
+//接收ROS中标准的imu消息，imu坐标系为x轴向前，y轴向左，z轴向上的右手坐标系
+//imu的原始数据,还没有转换到统一的坐标系
+//函数功能:消除重力影响,将imu测量结果进行坐标变换,积分得到在世界坐标系下的位置和速度
+void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
+{
+    double roll, pitch, yaw;
+    tf::Quaternion orientation;
+    //TODO:思考如何发布imu的orientation消息
+    tf::quaternionMsgToTF(imuIn->orientation,orientation);
+    //This will get the roll pitch and yaw from the matrix about fixed axes X, Y, Z respectively. That's R = Rz(yaw)*Ry(pitch)*Rx(roll).
+    //Here roll pitch yaw is in the global frame
+    //将四元数转换为欧拉角
+    tf::Matrix3x3(orientation).getRPY(roll,pitch,yaw);
 
+    //消除重力的影响,求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)
+    //Now R = Ry(yaw)*Rx(pitch)*Rz(roll)
+    //????????重力补偿部分推导与代码不一致,旋转顺序是怎么定的呢
+    //将重力从全局坐标系转换到局部坐标系,旋转顺序为z->y->x(yaw-pitch-roll)时结果和代码对应
+    float accX = imuIn->linear_acceleration.y - sin(roll) * cos(pitch) * 9.81;
+    float accY = imuIn->linear_acceleration.z - cos(roll) * cos(pitch) * 9.81;
+    float accZ = imuIn->linear_acceleration.x + sin(pitch) * 9.81;
+    
+    //循环移位效果，形成环形数组
+    //imuPointerLast范围: [0 , imuQueLength-1]
+    imuPointerLast = (imuPointerLast + 1) % imuQueLength;
 
- 
+    //都转换到了"左(x)-上(y)-前(z)"坐标系中
+    imuTime[imuPointerLast] = imuIn->header.stamp.toSec();
+    imuRoll[imuPointerLast] = roll;
+    imuPitch[imuPointerLast] = pitch;
+    imuYaw[imuPointerLast] = yaw;
+    imuAccX[imuPointerLast] = accX;
+    imuAccY[imuPointerLast] = accY;
+    imuAccZ[imuPointerLast] = accZ;
 
- 
-
-
+    //积分速度与位移
+    AccumulateIMUShift();
+    
+    return;
+}
 
 
 int main(int argc, char** argv)
 {
     ros::init(argc, argv, "scan_process");
     ros::NodeHandle nh;
-
+    //订阅rslidar的消息,调用laserCloudHandler函数
     ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/rslidar_points",2,laserCloudHandler);
+    //订阅imu的消息,调用imuHandler函数
+    ros::Subscriber subImu = nh.subscribe<sensor_msgs::Imu>("/IMU_raw",50,imuHandler);
+    //所有点云信息的发布者
+    pubLaserCloud = nh.advertise<sensor_msgs::PointCloud2> ("/rslidar_point_cloud", 2);
+    //CornerPointsSharp点云发布者
+    pubCornerPointsSharp = nh.advertise<sensor_msgs::PointCloud2>("/rslidar_cloud_sharp", 2);
+    //CornerPointsLessSharp点云发布者
+    pubCornerPointsLessSharp = nh.advertise<sensor_msgs::PointCloud2>("/rslidar_cloud_less_sharp", 2);
+    //SurfPointsFlat点云发布者
+    pubSurfPointsFlat = nh.advertise<sensor_msgs::PointCloud2>("/rslidar_cloud_flat", 2);
+    //SurfPointsLessFlat点云发布者
+    pubSurfPointsLessFlat = nh.advertise<sensor_msgs::PointCloud2>("/rslidar_cloud_less_flat", 2);
+    //发布当前点云帧中首尾点对应的imu姿态和位置速度变化信息
+    pubImuTrans = nh.advertise<sensor_msgs::PointCloud2> ("/imu_trans", 5);
 
-    
+    ROS_INFO("Scan_process ......");
+
     ros::spin();
     return 0;
 }
