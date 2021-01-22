@@ -273,21 +273,23 @@ void AccumulateIMUShift()
 //接收到点云数据后调用的回调函数
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
 {
+    //舍弃前systemDelay帧点云数据
     if(!systemInited)
     {
         systemInitCount++;
         if (systemInitCount >= systemDelay) {
            systemInited = true;
         }
-    return;
+        return;
     }
 
     //记录每个scan有曲率的点的开始和结束索引
     std::vector<int> scanStartInd(N_SCANS,0);
     std::vector<int> scanEndInd(N_SCANS,0);
 
-    //当前的点云时间
+    //当前的点云时间,单位转化成秒
     double timeScanCur = laserCloudmsg->header.stamp.toSec();
+    //设置点云的数据格式为XYZ
     pcl::PointCloud<pcl::PointXYZ> laserCloudIn;
     //消息转换成pcl数据存放
     pcl::fromROSMsg(*laserCloudmsg, laserCloudIn);
@@ -297,19 +299,23 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     //点云中点的数量
     int cloudSize = laserCloudIn.points.size();
     //lidar scan开始点的旋转角,atan2范围[-pi,+pi],计算旋转角时取负号是因为velodyne是顺时针旋转
+    //atan2加负号是要保证随着lidar顺时针旋转,方位角从递增,-pi->pi
     float startOri = -atan2(laserCloudIn.points[0].y,laserCloudIn.points[0].x);
     //lidar scan结束点的旋转角，加2*pi使点云旋转周期为2*pi
     float endOri = -atan2(laserCloudIn.points[cloudSize - 1].y,
                         laserCloudIn.points[cloudSize - 1].x) + 2 * M_PI;
     //判断结束方位角和起始角范围是否合理
-    //结束方位角与开始方位角差值控制在(PI,3*PI)范围，允许lidar不是一个圆周扫描
+    //结束方位角与开始方位角差值控制在(PI,3*PI)范围
+    //允许lidar不是一个圆周扫描
     //正常情况下在这个范围内：pi < endOri - startOri < 3*pi，异常则修正
     if(endOri - startOri  >  3*M_PI)
     {
+        //比如起始方位角在-pi附近,终止方位角在pi附近(还需要再加上2*pi,即3*pi)
         endOri -= 2 * M_PI;
     }
     else if(endOri - startOri < M_PI)
     {
+        //比如起始方位角在pi附近,终止方位角在-pi附近
         endOri += endOri + 2*M_PI; 
     }
     //判断雷达是否旋转过半
@@ -331,7 +337,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
         //对仰角取整,四舍五入
         int roundedAngle = int(angle+(angle<0.0? -0.5:+0.5));
         //记录点所在的scanID, VLD-16/robosense中ID范围:0~15,共16线
-        // VLD-16/robosense中仰角从15度->-15度时,ID从15递减至0
+        // VLD-16/robosense中仰角从15度->-15度时,ID依次为15,13,11,9...,1(仰角为正),14,12,10,...0(仰角为负)
         if(roundedAngle > 0)
         {
             scanID = roundedAngle;
@@ -347,6 +353,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
             continue;
          }
         //计算该点的旋转角,旋转角定义为空间中的点与z轴方向的夹角
+        //该旋转角的计算方式与坐标变换前的方式是一致的
         float ori = -atan2(point_.x,point_.z);
         //?????????旋转角的修正部分没看懂,loam中旋转角是如何定义的??
         if(!halfPassed)
@@ -355,6 +362,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
             //根据扫描线是否旋转过半选择与起始位置还是终止位置进行差值计算，从而进行补偿
             //确保-pi/2 < ori - startOri < 3*pi/2
             //??????为啥不是0< ori - startOri < 2*pi
+            //+++++++++++
             if(ori < startOri - M_PI/2)
             {
                 ori += 2*M_PI;
@@ -390,7 +398,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
         point_.intensity = scanID + scanPeriod*relTime;
         if(imuPointerLast >= 0)
         {
-            ROS_INFO("Accept the IMU data, process pointcloud with it!");
+            // ROS_INFO("Accept the IMU data, process pointcloud with it!");
             //如果收到IMU数据,使用IMU矫正点云畸变
             //计算点在当前周期内的时间
             float pointTime = relTime * scanPeriod;
@@ -485,10 +493,10 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
                 TransformToStartIMU(&point_);
             }
         }//收到imu消息时,利用imu信息矫正运动畸变
-        else
-        {
-            ROS_INFO("No IMU data, only use the lidar data.");
-        }
+        // else
+        // {
+        //     ROS_INFO("No IMU data, only use the lidar data.");
+        // }
         
             
         laserCloudScans[scanID].push_back(point_);
@@ -803,34 +811,36 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     sensor_msgs::PointCloud2 laserCloudOutMsg;
     pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
     laserCloudOutMsg.header.stamp = laserCloudmsg->header.stamp;
-    laserCloudOutMsg.header.frame_id = "/camera";
+    laserCloudOutMsg.header.frame_id = "rslidar";
     pubLaserCloud.publish(laserCloudOutMsg);
+
+    cout<< ros::Time::now()<<endl;
 
     //publich消除非匀速运动畸变后的平面点和边沿点
     //角点
     sensor_msgs::PointCloud2 cornerPointsSharpMsg;
     pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
     cornerPointsSharpMsg.header.stamp = laserCloudmsg->header.stamp;
-    cornerPointsSharpMsg.header.frame_id = "/camera";
+    cornerPointsSharpMsg.header.frame_id = "rslidar";
     pubCornerPointsSharp.publish(cornerPointsSharpMsg);
 
     sensor_msgs::PointCloud2 cornerPointsLessSharpMsg;
     pcl::toROSMsg(cornerPointsLessSharp, cornerPointsLessSharpMsg);
     cornerPointsLessSharpMsg.header.stamp = laserCloudmsg->header.stamp;
-    cornerPointsLessSharpMsg.header.frame_id = "/camera";
+    cornerPointsLessSharpMsg.header.frame_id = "rslidar";
     pubCornerPointsLessSharp.publish(cornerPointsLessSharpMsg);
 
     //面点
     sensor_msgs::PointCloud2 surfPointsFlat2;
     pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
     surfPointsFlat2.header.stamp = laserCloudmsg->header.stamp;
-    surfPointsFlat2.header.frame_id = "/camera";
+    surfPointsFlat2.header.frame_id = "rslidar";
     pubSurfPointsFlat.publish(surfPointsFlat2);
 
     sensor_msgs::PointCloud2 surfPointsLessFlat2;
     pcl::toROSMsg(surfPointsLessFlat, surfPointsLessFlat2);
     surfPointsLessFlat2.header.stamp = laserCloudmsg->header.stamp;
-    surfPointsLessFlat2.header.frame_id = "/camera";
+    surfPointsLessFlat2.header.frame_id = "rslidar";
     pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
 
     //publich IMU消息,由于循环到了最后，因此是Cur都是代表最后一个点，即最后一个点的欧拉角，畸变位移及一个点云周期增加的速度
@@ -858,7 +868,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     sensor_msgs::PointCloud2 imuTransMsgs;
     pcl::toROSMsg(imuTrans,imuTransMsgs);
     imuTransMsgs.header.stamp = laserCloudmsg->header.stamp;
-    imuTransMsgs.header.frame_id = "/camera";
+    imuTransMsgs.header.frame_id = "rslidar";
     pubImuTrans.publish(imuTransMsgs);
 
     return ;
