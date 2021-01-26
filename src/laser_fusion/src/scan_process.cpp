@@ -24,6 +24,7 @@ designed by Shubin
 #include <sensor_msgs/Imu.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
+#include <fstream>//ofstream类的头文件
 
 #include </home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
 
@@ -103,9 +104,16 @@ void ShiftToStartIMU(float pointTime)
 {
     //计算相对于imuStart,由于加减速产生的畸变位移(计算结果表示在全局坐标系下)
     //x2 = x1 + v*t + 0.5*a*t^2, 这里计算的就是0.5*a*t^2
+    //?????除了加减速会导致运动畸变,匀速运动也会导致点云数据的畸变啊
+    //原代码
     imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart - imuVeloXStart * pointTime;
     imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart - imuVeloYStart * pointTime;
     imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart - imuVeloZStart * pointTime;
+    //Si modify
+    // imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart;
+    // imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart;
+    // imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart;
+
     /********************************************************************************
     Rz(pitch).inverse * Rx(pitch).inverse * Ry(yaw).inverse * delta_Tg
     transfrom from the global frame to the local frame
@@ -218,7 +226,7 @@ void TransformToStartIMU(PointType *p)
     return;
 }
 
-//积分得到imu的速度和位移
+//积分得到imu在世界坐标系下的速度和位移
 void AccumulateIMUShift()
 {
     //获得在 "左-上-前"坐标系下imu的真实运动信息
@@ -229,7 +237,7 @@ void AccumulateIMUShift()
     float accY = imuAccY[imuPointerLast];
     float accZ = imuAccZ[imuPointerLast];
 
-    //将"左-上-前"坐标系下的imu信息转换到世界坐标系下
+    //将"左-上-前"局部坐标系下的imu信息转换到世界坐标系下,欧拉角旋转顺序与之前相反(之前是ypr),为rpy
     //将当前时刻的加速度值绕交换过的ZXY固定轴（原XYZ）分别旋转(roll, pitch, yaw)角
     //绕固定轴旋转->外旋,注意这里是向量在旋转,不是参考坐标系在旋转
     //Notes:欧拉角转换成旋转矩阵（相对于世界坐标系的旋转矩阵）通常是按外旋方式（绕固定轴）
@@ -268,7 +276,8 @@ void AccumulateIMUShift()
 
 }//积分得到imu的速度和位移
 
-
+//记录debug各种参数的文件
+ofstream para_test("temp.txt");
 
 //接收到点云数据后调用的回调函数
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
@@ -287,7 +296,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     std::vector<int> scanStartInd(N_SCANS,0);
     std::vector<int> scanEndInd(N_SCANS,0);
 
-    //当前的点云时间,单位转化成秒
+    //当前帧的点云时间,单位转化成秒
     double timeScanCur = laserCloudmsg->header.stamp.toSec();
     //设置点云的数据格式为XYZ
     pcl::PointCloud<pcl::PointXYZ> laserCloudIn;
@@ -362,38 +371,61 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
             //根据扫描线是否旋转过半选择与起始位置还是终止位置进行差值计算，从而进行补偿
             //确保-pi/2 < ori - startOri < 3*pi/2
             //??????为啥不是0< ori - startOri < 2*pi
-            //+++++++++++
-            if(ori < startOri - M_PI/2)
+            //原代码
+            // if(ori < startOri - M_PI/2)
+            // {
+            //     ori += 2*M_PI;
+            // }
+            // else if(ori > startOri + M_PI*3/2)
+            // {
+            //     ori -= 2*M_PI;
+            // }
+            // if(ori - startOri > M_PI)
+            // {
+            //     halfPassed = true;
+            // }
+
+            //Si简化后的代码
+            if(ori < startOri)
             {
                 ori += 2*M_PI;
             }
-            else if(ori > startOri + M_PI*3/2)
-            {
-                ori -= 2*M_PI;
-            }
-            //旋转超过半圈
-            if(ori - startOri > M_PI)
+            if(ori > startOri + M_PI)
             {
                 halfPassed = true;
             }
+            
         }
         else
         {
             //旋转超过半圈
-            //????????超过半圈后为啥要加2*pi
+            //原代码(有误???)
+            // ori += 2 * M_PI;
+            // if (ori < endOri - M_PI * 3 / 2) 
+            // {
+            //     ori += 2 * M_PI;
+            // } 
+            // else if (ori > endOri + M_PI / 2)
+            // {
+            //     ori -= 2 * M_PI;
+            // }
+
+            //Si简化后的代码
             ori += 2 * M_PI;
-            //确保-3*pi/2 < ori - endOri < pi/2
-            if (ori < endOri - M_PI * 3 / 2) 
+            if(ori > endOri)
             {
-                ori += 2 * M_PI;
-            } 
-            else if (ori > endOri + M_PI / 2)
-            {
-                ori -= 2 * M_PI;
+                ori -= 2*M_PI;
             }
         }
+
+        //记录测试数据
+        // para_test<<"startOri: "<<startOri*180/M_PI<<endl;
+        // para_test<<"curOri: "<<ori*180/M_PI<<endl;
+        // para_test<<"endOri: "<<endOri*180/M_PI<<endl;
+        // para_test<<"curOri - startOri: "<<(ori - startOri)*180/M_PI<<endl;
+
         //计算点云中点的相对扫描时间
-        float relTime = (ori - startOri)/(endOri - startOri);
+        float relTime = (ori - startOri)/(endOri - startOri);//比例
         //点强度=线号+点相对时间（即一个整数+一个小数，整数部分是线号，小数部分是该点的相对时间）,匀速扫描：根据当前扫描的角度和扫描周期计算相对扫描起始位置的时间
         point_.intensity = scanID + scanPeriod*relTime;
         if(imuPointerLast >= 0)
@@ -402,22 +434,23 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
             //如果收到IMU数据,使用IMU矫正点云畸变
             //计算点在当前周期内的时间
             float pointTime = relTime * scanPeriod;
-            //寻找是否有点云的时间戳 小于 IMU的时间戳
+            //找到 大于 当前点时间的最小时间imu数据位置
             while (imuPointerFront != imuPointerLast)
             {
                 //点时间=点云时间+周期时间
                 if(timeScanCur + pointTime < imuTime[imuPointerFront])
                 {
-                    //当有点云数据的时间 小于 imu的时间戳时,break(因为imu的时间戳范围要包含点云时间戳范围)
+                    //当有点云数据的时间 小于 imu的时间戳时,break
                     break;
                 }
-                //找到 小于 当前点时间的最大时间imu数据位置
+                //找到 大于 当前点时间的最小时间imu数据位置
                 imuPointerFront = (imuPointerFront + 1) % imuQueLength;
             }
 
             if(timeScanCur + pointTime > imuTime[imuPointerFront])
             {
-                //imuPointerFront是小于且最接近当前点时间的imu位置索引
+                //imu序列中数据的时间都小于当前点的时间
+                //imuPointerFront(也是imuPointerLast)是小于且最接近当前点时间的imu位置索引
                 //把imuPointerFront位置的imu数据当做当前点的imu状态
                 imuRollCur = imuRoll[imuPointerFront];
                 imuPitchCur = imuPitch[imuPointerFront];
@@ -431,8 +464,12 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
                 imuShiftYCur = imuShiftY[imuPointerFront];
                 imuShiftZCur = imuShiftZ[imuPointerFront];
             }
-            else//当前点的时间 小于 imu时间,即当前点之前没有imu数据,imu数据在当前点之后出现
+            else
             {
+                //当前点的时间 小于 imu时间,有两种情况:
+                //1. 上一条件中找到的刚好在该点之后的imu数据
+                //2. imu数据都在该点之后(不会出现这种情况,因为能进现在的函数表明该点之前已经有了imu的数据)
+                //找到imuPointerFront的前一个imu数据
                 int imuPointerBack = (imuPointerFront + imuQueLength - 1) % imuQueLength;
                 //通过线性插值的方式计算出当前点对应的imu状态,假设imu状态在这段时间内是均匀变化的
                 /*     线性插值的结论:直线上有两点a和b,对应的值分别是f(a)和f(b),函数值随自变量均匀变化,
@@ -446,7 +483,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
                 imuRollCur = imuRoll[imuPointerFront]*ratioFront + imuRoll[imuPointerBack]*ratioBack;
                 imuPitchCur = imuPitch[imuPointerFront]*ratioFront + imuPitch[imuPointerBack]*ratioBack;
                 //航向角由于存在奇异性,因此需要进一步判断处理
-                //?????为什么要求 | imuYaw[imuPointerFront] - imuYaw[imuPointerBack] |  <= pi
+                //要求 | imuYaw[imuPointerFront] - imuYaw[imuPointerBack] |  <= pi
                 if (imuYaw[imuPointerFront] - imuYaw[imuPointerBack] > M_PI) 
                 {
                     imuYawCur = imuYaw[imuPointerFront] * ratioFront + (imuYaw[imuPointerBack] + 2 * M_PI) * ratioBack;
@@ -501,7 +538,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
             
         laserCloudScans[scanID].push_back(point_);
     }//遍历所有点
-
+//+++++++++
     //获得有效范围内的点的数量
     cloudSize = count;
     pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
@@ -814,7 +851,8 @@ void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr& laserCloudmsg)
     laserCloudOutMsg.header.frame_id = "rslidar";
     pubLaserCloud.publish(laserCloudOutMsg);
 
-    cout<< ros::Time::now()<<endl;
+    //打印每次处理完一帧点云的时间
+    //cout<< ros::Time::now()<<endl;
 
     //publich消除非匀速运动畸变后的平面点和边沿点
     //角点
@@ -888,9 +926,9 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
     //将四元数转换为欧拉角
     tf::Matrix3x3(orientation).getRPY(roll,pitch,yaw);
 
-    //消除重力的影响,求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)
+    //1. 消除重力的影响,求出xyz方向的加速度实际值
+    //2. 进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)
     //Now R = Ry(yaw)*Rx(pitch)*Rz(roll)
-    //????????重力补偿部分推导与代码不一致,旋转顺序是怎么定的呢
     //将重力从全局坐标系转换到局部坐标系,旋转顺序为z->y->x(yaw-pitch-roll)时结果和代码对应
     float accX = imuIn->linear_acceleration.y - sin(roll) * cos(pitch) * 9.81;
     float accY = imuIn->linear_acceleration.z - cos(roll) * cos(pitch) * 9.81;
