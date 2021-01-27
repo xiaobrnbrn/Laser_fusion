@@ -17,6 +17,7 @@
         "algorithm": "cpp",
         "complex": "cpp",
         "fstream": "cpp",
-        "iosfwd": "cpp"
+        "iosfwd": "cpp",
+        "ostream": "cpp"
     }
 }
