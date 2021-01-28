@@ -971,7 +971,6 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
     return;
 }
 
-
 int main(int argc, char** argv)
 {
     ros::init(argc, argv, "scan_process");

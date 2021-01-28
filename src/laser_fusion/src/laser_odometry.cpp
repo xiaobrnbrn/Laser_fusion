@@ -16,6 +16,7 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 
+
 //一个点云周期
 const float scanPeriod = 0.1;
 
@@ -55,7 +56,17 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr imuTrans(new pcl::PointCloud<pcl::PointXYZ>(
 pcl::PointCloud<PointType>::Ptr laserCloudCornerLast(new pcl::PointCloud<PointType>());
 //less flat points of last frame
 pcl::PointCloud<PointType>::Ptr laserCloudSurfLast(new pcl::PointCloud<PointType>());
+//kd-tree built by less sharp points of last frame
+pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerLast(new pcl::KdTreeFLANN<PointType>());
+//kd-tree built by less flat points of last frame
+pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfLast(new pcl::KdTreeFLANN<PointType>());
+//保存前一个节点发过来的未经处理过的特征点
+pcl::PointCloud<PointType>::Ptr laserCloudOri(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr coeffSel(new pcl::PointCloud<PointType>());
 
+
+int laserCloudCornerLastNum;//默认初始化为0
+int laserCloudSurfLastNum;
 
 //点云第一个点对应的RPY
 float imuRollStart = 0, imuPitchStart = 0, imuYawStart = 0;
@@ -65,6 +76,12 @@ float imuRollLast = 0, imuPitchLast = 0, imuYawLast = 0;
 float imuShiftFromStartX = 0, imuShiftFromStartY = 0, imuShiftFromStartZ = 0;
 //点云最后一个点相对于第一个点的畸变速度
 float imuVeloFromStartX = 0, imuVeloFromStartY = 0, imuVeloFromStartZ = 0;
+
+//当前帧相对上一帧的状态转移量，in the local frame
+//存放的参数依次是:俯仰角, , 横滚角和位移XYZ
+float transform[6] = {0};
+//当前帧相对于第一帧的状态转移量，in the global frame
+float transformSum[6] = {0};
 
 
 void laserCloudSharpHandler(const sensor_msgs::PointCloud2::ConstPtr& cornerPointsSharp2)
@@ -219,7 +236,7 @@ int main(int argc, char** argv)
             newLaserCloudFullRes = false;
             newImuTrans = false;
 
-            //将第一个点云数据集发送给laserMapping,从下一个点云数据开始处理
+            //将第一帧点云数据发送给laserMapping,从下一个点云数据开始处理
             if (!systemInited) 
             {
                 //将cornerPointsLessSharp与laserCloudCornerLast交换,目的保存cornerPointsLessSharp的值下轮使用
@@ -227,13 +244,72 @@ int main(int argc, char** argv)
                 pcl::PointCloud<PointType>::Ptr laserCloudTemp = cornerPointsLessSharp;
                 cornerPointsLessSharp = laserCloudCornerLast;
                 laserCloudCornerLast = laserCloudTemp;
-                //+++++++
+                //将surfPointLessFlat与laserCloudSurfLast交换，目的保存surfPointsLessFlat的值下轮使用
+                laserCloudTemp = surfPointsLessFlat;
+                surfPointsLessFlat = laserCloudSurfLast;
+                laserCloudSurfLast = laserCloudTemp;
+                //构建kd-tree
+                kdtreeCornerLast->setInputCloud(laserCloudCornerLast);//角点
+                kdtreeSurfLast->setInputCloud(laserCloudSurfLast);//面点
+                //将角点和面点分别发送给laserMapping
+                sensor_msgs::PointCloud2 laserCloudCornerLast2;
+                pcl::toROSMsg(*laserCloudCornerLast,laserCloudCornerLast2);
+                laserCloudCornerLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
+                laserCloudCornerLast2.header.frame_id = "rslidar";
+                pubLaserCloudCornerLast.publish(laserCloudCornerLast2);
 
+                sensor_msgs::PointCloud2 laserCloudSurfLast2;
+                pcl::toROSMsg(*laserCloudSurfLast, laserCloudSurfLast2);
+                laserCloudSurfLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
+                laserCloudSurfLast2.header.frame_id = "rslidar";
+                pubLaserCloudSurfLast.publish(laserCloudSurfLast2);
+                
+                //记住原点的横滚角和俯仰角,?????航向角呢
+                transformSum[0] += imuPitchStart;
+                transformSum[2] += imuRollStart;
+
+                systemInited = true;
+                continue;
             }
             
-        }
+            //T平移量的初值赋值为加减速的位移量，为其梯度下降的方向（沿用上次转换的T（一个sweep匀速模型），同时在其基础上减去匀速运动位移，即只考虑加减速的位移量）
+            //??????没看懂
+            transform[3] -= imuVeloFromStartX * scanPeriod;
+            transform[4] -= imuVeloFromStartY * scanPeriod;
+            transform[5] -= imuVeloFromStartZ * scanPeriod;
 
+            if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) 
+            {
+                //上一帧有足够多的角点和面点做点云配准
+                std::vector<int> indices;
+                //在收到消息时调用的回调函数不是去过一次Nan点了么????是否多余
+                pcl::removeNaNFromPointCloud(*cornerPointsSharp,*cornerPointsSharp, indices);
+                //当前帧中角点和面点的数量
+                int cornerPointsSharpNum = cornerPointsSharp->points.size();
+                int surfPointsFlatNum = surfPointsFlat->points.size();
+                //LM优化,最多迭代25次
+                for (int iterCount = 0; iterCount < 25; iterCount++)
+                {
+                    laserCloudOri->clear();
+                    coeffSel->clear();
+                    //处理当前点云中的曲率最大的特征点,从上个点云中曲率比较大的特征点中找两个最近距离点
+                    //一个点使用kd-tree查找，另一个根据找到的点在其相邻线找另外一个最近距离的点
+                    for(int i = 0; i < cornerPointsSharpNum; i++)
+                    {
+                        TransformToStart(&cornerPointsSharp->points[i], &pointSel);
+
+
+                    }
+
+                }
+
+
+            }
+
+
+        }
     }
+
 
 
     ROS_INFO("Laser_odometry...");
