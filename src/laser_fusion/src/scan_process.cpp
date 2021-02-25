@@ -105,14 +105,15 @@ void ShiftToStartIMU(float pointTime)
     //计算相对于imuStart,由于加减速产生的畸变位移(计算结果表示在全局坐标系下)
     //x2 = x1 + v*t + 0.5*a*t^2, 这里计算的就是0.5*a*t^2
     //?????除了加减速会导致运动畸变,匀速运动也会导致点云数据的畸变啊
+    //?????laserOdometry的代码中还有去除点云匀速运动导致的畸变部分,所以这里只消除加减速导致的运动畸变??
     //原代码
-    // imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart - imuVeloXStart * pointTime;
-    // imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart - imuVeloYStart * pointTime;
-    // imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart - imuVeloZStart * pointTime;
+    imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart - imuVeloXStart * pointTime;
+    imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart - imuVeloYStart * pointTime;
+    imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart - imuVeloZStart * pointTime;
     //Si modify
-    imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart;
-    imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart;
-    imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart;
+    // imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart;
+    // imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart;
+    // imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart;
 
     /********************************************************************************
     Rz(pitch).inverse * Rx(pitch).inverse * Ry(yaw).inverse * delta_Tg

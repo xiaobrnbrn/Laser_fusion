@@ -150,10 +150,10 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
 # add_executable(${PROJECT_NAME}_node src/laser_fusion_node.cpp)
 add_executable(scan_process  src/scan_process.cpp)
-target_link_libraries(scan_process  ${catkin_LIBRARIES}  ${PCL_LIBRARIES})
+target_link_libraries(scan_process  ${catkin_LIBRARIES}  ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(laser_odometry  src/laser_odometry.cpp)
-target_link_libraries(laser_odometry  ${catkin_LIBRARIES}  ${PCL_LIBRARIES})
+target_link_libraries(laser_odometry  ${catkin_LIBRARIES}  ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
