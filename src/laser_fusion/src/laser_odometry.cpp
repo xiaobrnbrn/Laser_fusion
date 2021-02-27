@@ -428,6 +428,7 @@ int main(int argc, char** argv)
     while(status)
     {
         //查看topic缓存区是否存在消息,有消息就传入回调函数,没有的话则继续向后执行
+        // 进行一次回调函数的调用（完成当前时刻的msg的订阅和上一时刻的处理后的msg的发布)
         ros::spinOnce();
         //fabs()函数:求绝对值
         if(newCornerPointsSharp && newCornerPointsLessSharp && newSurfPointsFlat && 
@@ -513,6 +514,8 @@ int main(int argc, char** argv)
                             std::vector<int> indices;
                             pcl::removeNaNFromPointCloud(*laserCloudCornerLast,*laserCloudCornerLast, indices);
                             //kd-tree查找一个最近距离点，边沿点未经过体素栅格滤波，一般边沿点本来就比较少，不做滤波
+                            //nearestKSearch是PCL中的K近邻域搜索，搜索上一时刻LessCornor的K邻域点
+                            //搜索结果: pointSearchInd是索引; pointSearchSqDis是近邻对应的平方距离(以25作为阈值)
                             kdtreeCornerLast->nearestKSearch(pointSel, 1, pointSearchInd, pointSearchSqDis);
                             int closestPointInd = -1, minPointInd2 = -1;
 
