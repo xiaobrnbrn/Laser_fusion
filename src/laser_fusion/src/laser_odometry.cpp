@@ -375,6 +375,7 @@ int main(int argc, char** argv)
 {
     ros::init(argc,argv,"laser_odometry");
     ros::NodeHandle nh;
+    ROS_INFO("Laser_odometry...");
 
     //订阅scan_process发布的/laser_cloud_sharp话题,调用laserCloudSharpHandler函数
     ros::Subscriber subCornerPointsSharp = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_sharp",2,laserCloudSharpHandler);
@@ -1085,6 +1086,6 @@ int main(int argc, char** argv)
         rate.sleep();
     }
 
-    ROS_INFO("Laser_odometry...");
+    // ROS_INFO("Laser_odometry...");
     return 0;
 }

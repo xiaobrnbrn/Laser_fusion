@@ -1,0 +1,2 @@
+#outdoor.bag
+rosbag play outdoor.bag /points_raw:=/rslidar_points /imu_correct:=/IMU_raw -l
