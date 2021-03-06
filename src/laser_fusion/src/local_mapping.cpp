@@ -25,6 +25,20 @@ const int stackFrameNum = 1;
 //控制处理得到的点云map，每隔几次publich给rviz显示
 const int mapFrameNum = 5;
 
+//时间戳
+double timeLaserCloudCornerLast = 0;
+double timeLaserCloudSurfLast = 0;
+double timeLaserCloudFullRes = 0;
+double timeLaserOdometry = 0;
+
+//接收标志
+bool newLaserCloudCornerLast = false;
+bool newLaserCloudSurfLast = false;
+bool newLaserCloudFullRes = false;
+bool newLaserOdometry = false;
+
+
+
 
 
 int main()
