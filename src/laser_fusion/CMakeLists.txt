@@ -155,6 +155,9 @@ target_link_libraries(scan_process  ${catkin_LIBRARIES}  ${PCL_LIBRARIES} ${Open
 add_executable(laser_odometry  src/laser_odometry.cpp)
 target_link_libraries(laser_odometry  ${catkin_LIBRARIES}  ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
+add_executable(local_mapping  src/local_mapping.cpp)
+target_link_libraries(local_mapping  ${catkin_LIBRARIES}  ${PCL_LIBRARIES} ${OpenCV_LIBS})
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use

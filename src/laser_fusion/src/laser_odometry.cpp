@@ -1,5 +1,5 @@
 //Laser_odometry
-//该线程作用:(1)实现lidar里程计的功能;(2)完成前后帧点云数据的融合
+//该线程作用:通过帧间匹配实现lidar里程计的功能;
 
 #include <cmath>
 #include </home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>

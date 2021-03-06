@@ -24,5 +24,6 @@
         "vector": "cpp",
         "unordered_map": "cpp",
         "unordered_set": "cpp"
-    }
+    },
+    "cmake.configureOnOpen": false
 }
