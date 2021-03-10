@@ -5,6 +5,8 @@
 	<node pkg="laser_fusion" type="scan_process" name="scan_process" output="screen"/>
 	
 	<node pkg="laser_fusion" type="laser_odometry" name="laser_odometry" output="screen"     		respawn="true"/>
+	
+	<node pkg="laser_fusion" type="local_mapping" name="local_mapping" output="screen" />
 	 
 	<node pkg="rviz" type="rviz" name="rviz"/>
 
