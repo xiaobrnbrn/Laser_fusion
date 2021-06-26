@@ -2,7 +2,7 @@
 //该线程作用:通过帧间匹配实现lidar里程计的功能;
 
 #include <cmath>
-#include </home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
+#include </home/omnisky/aSLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
 #include <nav_msgs/Odometry.h>
 #include <opencv/cv.h>
 #include <pcl/point_cloud.h>

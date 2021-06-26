@@ -2,7 +2,7 @@
 //功能:(1)构建维护局部地图; (2)根据局部地图优化Lidar位姿
 
 #include <math.h>
-#include </home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
+#include </home/omnisky/aSLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
 #include <nav_msgs/Odometry.h>
 #include <opencv/cv.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -726,8 +726,6 @@ int main(int argc, char** argv)
 
 
     }
-
-
 
 
     return 0;

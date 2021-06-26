@@ -26,8 +26,7 @@ designed by Shubin
 #include <tf/transform_broadcaster.h>
 #include <fstream>//ofstream类的头文件
 
-#include </home/sishubin/SLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
-
+#include </home/omnisky/aSLAMcodes/My_Local_Repo/Laser_fusion/src/laser_fusion/include/laser_fusion/common.h>
 
 using namespace std;
 //using namespace ros;
