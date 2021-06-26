@@ -1,2 +1,0 @@
-laser_fusion
--DCATKIN_DEVEL_PREFIX=/home/omnisky/aSLAMcodes/My_Local_Repo/Laser_fusion/devel -DCMAKE_INSTALL_PREFIX=/home/omnisky/aSLAMcodes/My_Local_Repo/Laser_fusion/install -G Unix Makefiles
